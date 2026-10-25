@@ -100,6 +100,27 @@ const responseSchema = {
   required: ["summary", "budgetLines", "tasks", "vendors", "ideas"],
 }
 
+const RETRYABLE_STATUS = new Set([429, 503])
+
+function abortError(): DOMException {
+  return new DOMException("The operation was aborted", "AbortError")
+}
+
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(abortError())
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(abortError())
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
+}
+
 export async function generateWithGemini(args: {
   apiKey: string
   brief: Brief
@@ -109,30 +130,39 @@ export async function generateWithGemini(args: {
 }): Promise<unknown> {
   const model = geminiModel()
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
-  const response = await fetch(url, {
-    method: "POST",
-    signal: args.signal,
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": args.apiKey,
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: buildPrompt(args.brief, args.followUp, args.currentPlan) }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.4,
-        responseMimeType: "application/json",
-        responseSchema,
+  const body = JSON.stringify({
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: buildPrompt(args.brief, args.followUp, args.currentPlan) }],
       },
-    }),
+    ],
+    generationConfig: {
+      temperature: 0.4,
+      responseMimeType: "application/json",
+      responseSchema,
+      // Leave this at 0. Hidden reasoning makes Flash miss the request deadline.
+      thinkingConfig: { thinkingBudget: 0 },
+    },
   })
 
-  if (!response.ok) {
-    throw new Error(`GEMINI_${response.status}`)
+  let response: Response | null = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    response = await fetch(url, {
+      method: "POST",
+      signal: args.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": args.apiKey,
+      },
+      body,
+    })
+    if (response.ok || !RETRYABLE_STATUS.has(response.status) || attempt === 1) break
+    await pause(800, args.signal)
+  }
+
+  if (!response?.ok) {
+    throw new Error(`GEMINI_${response?.status ?? 0}`)
   }
 
   const payload = (await response.json()) as {

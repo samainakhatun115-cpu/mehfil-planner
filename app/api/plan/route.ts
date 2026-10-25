@@ -81,10 +81,25 @@ export async function POST(request: Request) {
         "Gemini returned a plan that was missing a budget, timeline, vendor list, or ideas. Try again.",
       )
     }
+    const upstreamStatus = error instanceof Error ? /^GEMINI_(\d+)$/.exec(error.message)?.[1] : undefined
+    if (upstreamStatus === "401" || upstreamStatus === "403") {
+      return jsonError(
+        502,
+        "BAD_KEY",
+        "Gemini rejected the API key. In Vercel, set GEMINI_API_KEY to the key from AI Studio, then redeploy.",
+      )
+    }
+    if (upstreamStatus === "429" || upstreamStatus === "503") {
+      return jsonError(
+        503,
+        "BUSY",
+        "Gemini is busy right now. Wait a few seconds and press Generate plan again.",
+      )
+    }
     return jsonError(
       502,
       "UPSTREAM",
-      "Gemini could not write a plan just now. Check the API key and try again.",
+      "Gemini could not write a plan just now. Wait a few seconds and try again.",
     )
   }
 }
