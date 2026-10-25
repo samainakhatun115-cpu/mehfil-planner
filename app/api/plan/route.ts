@@ -65,6 +65,8 @@ export async function POST(request: Request) {
       : generated
     return Response.json({ plan })
   } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown"
+    console.error("plan generation failed:", reason)
     if (timeout.aborted || (error instanceof Error && error.name === "AbortError")) {
       return jsonError(
         504,

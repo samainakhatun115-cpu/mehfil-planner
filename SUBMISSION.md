@@ -73,7 +73,7 @@ Mehfil is a celebration planner for weddings, birthdays, and community gathering
 Edit the model name if you changed `GEMINI_MODEL`. Stay under 1,024 characters.
 
 ```
-Google Gemini (default model gemini-2.5-flash, override with the server env var GEMINI_MODEL) is called only from POST /api/plan. GEMINI_API_KEY is read on the server and is never sent to the browser. Gemini returns JSON for the summary, budget estimates, dated tasks, vendor categories, and idea cards. A follow-up note calls the same route with the current plan so Gemini can revise it. The server then merges locked host edits back in, and it drops any business name or phone number the model adds. If the key is missing, Preview a sample plan shows local estimates and does not call Gemini. No other generative model is used in the app.
+Google Gemini (default model gemini-3.6-flash, override with the server env var GEMINI_MODEL) is called only from POST /api/plan. GEMINI_API_KEY is read on the server and is never sent to the browser. Gemini returns JSON for the summary, budget estimates, dated tasks, vendor categories, and idea cards. A follow-up note calls the same route with the current plan so Gemini can revise it. The server then merges locked host edits back in, and it drops any business name or phone number the model adds. If the key is missing, Preview a sample plan shows local estimates and does not call Gemini. No other generative model is used in the app.
 ```
 
 ## Checklist before you click Submit
