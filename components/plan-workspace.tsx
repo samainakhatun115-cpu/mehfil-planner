@@ -1,6 +1,7 @@
 "use client"
 
 import { BudgetPanel } from "@/components/budget-panel"
+import { DayOfPanel } from "@/components/day-of-panel"
 import { IdeasPanel } from "@/components/ideas-panel"
 import { TimelinePanel } from "@/components/timeline-panel"
 import { VendorPanel } from "@/components/vendor-panel"
@@ -11,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   EVENT_LABELS,
   countdownLabel,
+  type DayScheduleRow,
   type Plan,
   type VendorItem,
 } from "@/lib/plan"
@@ -28,6 +30,7 @@ export function PlanWorkspace({
   onFollowUp,
   onRefine,
   onClear,
+  onDaySchedule,
 }: {
   plan: Plan | null
   followUp: string
@@ -41,6 +44,7 @@ export function PlanWorkspace({
   onFollowUp: (value: string) => void
   onRefine: () => void
   onClear: () => void
+  onDaySchedule: (id: string, patch: Partial<Pick<DayScheduleRow, "time" | "moment" | "note">>) => void
 }) {
   if (!plan) {
     return (
@@ -98,6 +102,9 @@ export function PlanWorkspace({
           <TabsTrigger value="ideas" className="h-8 px-3">
             Ideas
           </TabsTrigger>
+          <TabsTrigger value="day-of" className="h-8 px-3">
+            Day of
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="budget" className="pt-2">
           <BudgetPanel
@@ -127,6 +134,14 @@ export function PlanWorkspace({
             disabled={disabled}
             onFollowUp={onFollowUp}
             onRefine={onRefine}
+          />
+        </TabsContent>
+        <TabsContent value="day-of" className="pt-2">
+          <DayOfPanel
+            rows={plan.daySchedule}
+            brief={plan.brief}
+            disabled={disabled}
+            onChange={onDaySchedule}
           />
         </TabsContent>
       </Tabs>

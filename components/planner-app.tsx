@@ -11,6 +11,7 @@ import {
   sortTasks,
   validateBrief,
   type Brief,
+  type DayScheduleRow,
   type FieldErrors,
   type Plan,
   type VendorItem,
@@ -217,6 +218,23 @@ export function PlannerApp() {
     )
   }
 
+  function updateDaySchedule(
+    id: string,
+    patch: Partial<Pick<DayScheduleRow, "time" | "moment" | "note">>,
+  ) {
+    commitPlan((current) =>
+      current
+        ? {
+            ...current,
+            daySchedule: current.daySchedule.map((row) =>
+              row.id === id ? { ...row, ...patch, locked: true } : row,
+            ),
+            updatedAt: new Date().toISOString(),
+          }
+        : current,
+    )
+  }
+
   const loading = status === "loading"
 
   return (
@@ -310,6 +328,7 @@ export function PlannerApp() {
             setFollowUp("")
             setMessage("Saved plan cleared on this browser.")
           }}
+          onDaySchedule={updateDaySchedule}
         />
       </div>
       <footer className="text-sm text-muted-foreground lg:col-span-2">

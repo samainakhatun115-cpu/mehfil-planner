@@ -96,6 +96,16 @@ export interface Idea {
   detail: string
 }
 
+export interface DayScheduleRow {
+  id: string
+  /** "HH:MM" in 24-hour format, e.g. "10:30" */
+  time: string
+  moment: string
+  note: string
+  /** true once the user edits any field */
+  locked: boolean
+}
+
 export type PlanSource = "gemini" | "sample"
 
 export interface Plan {
@@ -106,6 +116,7 @@ export interface Plan {
   tasks: PlanTask[]
   vendors: VendorItem[]
   ideas: Idea[]
+  daySchedule: DayScheduleRow[]
   source: PlanSource
   createdAt: string
   updatedAt: string
@@ -542,6 +553,90 @@ function ideaTemplates(brief: Brief, idFor: (kind: string) => string): Idea[] {
   return ideas.slice(0, 4).map((idea) => ({ ...idea, id: idFor(idea.title) }))
 }
 
+export function buildDaySchedule(
+  brief: Brief,
+  idFor: (kind: string) => string = makeId,
+): DayScheduleRow[] {
+  const venue = brief.venueStyle === "outdoor" ? "outdoor" : "indoor"
+  const guestWord = brief.guestCount === 1 ? "guest" : "guests"
+
+  // Derive a sensible start time based on event type
+  const startHour = brief.eventType === "wedding" ? 10 : brief.eventType === "community" ? 9 : 11
+
+  const rows: Array<Omit<DayScheduleRow, "id" | "locked">> = []
+
+  // 1 – Setup / arrive early
+  const setupHour = startHour - 1
+  rows.push({
+    time: `${String(setupHour).padStart(2, "0")}:00`,
+    moment: "Setup and final check",
+    note: `Arrive at the ${venue} venue, confirm food station and seating for ${brief.guestCount} ${guestWord}.`,
+  })
+
+  // 2 – Guests arrive
+  rows.push({
+    time: `${String(startHour).padStart(2, "0")}:00`,
+    moment: "Guests arrive",
+    note: `Welcome ${brief.guestCount} ${guestWord} at the entrance. Have someone at the door.`,
+  })
+
+  // 3 – Opening / welcome
+  const openHour = startHour
+  rows.push({
+    time: `${String(openHour).padStart(2, "0")}:30`,
+    moment: brief.eventType === "wedding" ? "Ceremony begins" : brief.eventType === "community" ? "Opening words" : "Welcome and gather",
+    note: `Bring everyone together. Keep it short — guests are still settling in.`,
+  })
+
+  // 4 – Food is served
+  const foodHour = startHour + 1
+  rows.push({
+    time: `${String(foodHour).padStart(2, "0")}:00`,
+    moment: "Food is served",
+    note: `${brief.diet.charAt(0).toUpperCase() + brief.diet.slice(1)} menu. Ensure all trays are labelled before guests line up.`,
+  })
+
+  // 5 – Main moment
+  const mainHour = startHour + 2
+  rows.push({
+    time: `${String(mainHour).padStart(2, "0")}:00`,
+    moment:
+      brief.eventType === "birthday"
+        ? "Cake and celebration"
+        : brief.eventType === "wedding"
+        ? "Main ceremony moment"
+        : "Main programme",
+    note:
+      brief.eventType === "birthday"
+        ? "Cake cutting, photos, and a round of wishes."
+        : brief.eventType === "wedding"
+        ? "The key ritual or exchange of vows. Photographer should be in position."
+        : "Central talk, activity, or performance.",
+  })
+
+  // 6 – Wind down / mingle
+  const windHour = startHour + 3
+  rows.push({
+    time: `${String(windHour).padStart(2, "0")}:00`,
+    moment: "Mingle and wrap up",
+    note: `Free time. Collect any RSVPs or feedback. Begin clearing up the ${venue} space.`,
+  })
+
+  // 7 – Goodbye
+  const endHour = startHour + 4
+  rows.push({
+    time: `${String(endHour).padStart(2, "0")}:00`,
+    moment: "Guests depart",
+    note: `Say goodbye and ensure everyone has a safe way home from ${brief.city}.`,
+  })
+
+  return rows.map((row) => ({
+    ...row,
+    id: idFor(`day-${row.moment}`),
+    locked: false,
+  }))
+}
+
 export function buildSamplePlan(
   brief: Brief,
   options?: {
@@ -581,6 +676,7 @@ export function buildSamplePlan(
       userAdded: false,
     })),
     ideas: ideaTemplates(brief, idFor),
+    daySchedule: buildDaySchedule(brief, idFor),
     source: "sample",
     createdAt: nowIso,
     updatedAt: nowIso,
@@ -707,6 +803,30 @@ export function normalizeGeneratedPlan(
     cleanText(record.summary, LIMITS.summary) ||
     `A ${EVENT_LABELS[brief.eventType].toLowerCase()} plan for ${brief.guestCount} guests in ${brief.city}.`
 
+  // Parse optional daySchedule from Gemini response; fall back to generated rows
+  const rawSchedule = Array.isArray(record.daySchedule) ? record.daySchedule : []
+  const daySchedule: DayScheduleRow[] =
+    rawSchedule.length > 0
+      ? rawSchedule
+          .slice(0, 10)
+          .map((item): DayScheduleRow | null => {
+            const row = asRecord(item)
+            if (!row) return null
+            const moment = cleanText(row.moment, 120)
+            if (!moment) return null
+            const rawTime = cleanText(row.time, 5)
+            const time = /^\d{2}:\d{2}$/.test(rawTime) ? rawTime : "12:00"
+            return {
+              id: nextId("day", row.id),
+              time,
+              moment,
+              note: cleanText(row.note, LIMITS.text),
+              locked: false,
+            }
+          })
+          .filter((r): r is DayScheduleRow => r !== null)
+      : buildDaySchedule(brief, idFor)
+
   return {
     id: nextId("plan", record.id),
     brief,
@@ -715,6 +835,7 @@ export function normalizeGeneratedPlan(
     tasks,
     vendors,
     ideas,
+    daySchedule,
     source,
     createdAt: nowIso,
     updatedAt: nowIso,
@@ -731,6 +852,8 @@ export function mergeRefinement(
   nowIso: string,
   brief: Brief = previous.brief,
 ): Plan {
+  // Preserve any user-locked rows; only replace unlocked rows with incoming
+  const mergedSchedule = mergeDaySchedule(previous.daySchedule, incoming.daySchedule)
   return {
     ...previous,
     brief,
@@ -739,9 +862,22 @@ export function mergeRefinement(
     tasks: sortTasks(mergeTasks(previous.tasks, incoming.tasks)),
     vendors: mergeVendors(previous.vendors, incoming.vendors),
     ideas: incoming.ideas.length > 0 ? incoming.ideas : previous.ideas,
+    daySchedule: mergedSchedule,
     source: incoming.source === "gemini" ? "gemini" : previous.source,
     updatedAt: nowIso,
   }
+}
+
+function mergeDaySchedule(
+  previous: DayScheduleRow[],
+  incoming: DayScheduleRow[],
+): DayScheduleRow[] {
+  if (incoming.length === 0) return previous
+  // Keep locked (user-edited) rows from previous; supplement with incoming
+  const locked = previous.filter((r) => r.locked)
+  const lockedMoments = new Set(locked.map((r) => r.moment.trim().toLowerCase()))
+  const fresh = incoming.filter((r) => !lockedMoments.has(r.moment.trim().toLowerCase()))
+  return [...locked, ...fresh]
 }
 
 function mergeBudget(previous: BudgetLine[], incoming: BudgetLine[]): BudgetLine[] {
@@ -946,12 +1082,34 @@ export function parseStoredPlan(value: unknown): Plan | null {
         why: cleanText(previous.why, LIMITS.text) || vendor.why,
       }
     })
+    // Restore user-edited schedule rows from storage
+    const previousSchedule = new Map(
+      (Array.isArray(record.daySchedule) ? record.daySchedule : []).map((item) => {
+        const row = asRecord(item)
+        return [cleanText(row?.id, 80), row] as const
+      }),
+    )
+    const daySchedule: DayScheduleRow[] = normalized.daySchedule.map((row) => {
+      const previous = previousSchedule.get(row.id)
+      if (!previous || previous.locked !== true) return row
+      return {
+        ...row,
+        time: /^\d{2}:\d{2}$/.test(cleanText(previous.time, 5))
+          ? cleanText(previous.time, 5)
+          : row.time,
+        moment: cleanText(previous.moment, 120) || row.moment,
+        note: cleanText(previous.note, LIMITS.text) || row.note,
+        locked: true,
+      }
+    })
+
     return {
       ...normalized,
       id: cleanText(record.id, 80) || normalized.id,
       budgetLines,
       tasks: sortTasks(tasks),
       vendors,
+      daySchedule,
       createdAt: cleanText(record.createdAt, 40) || normalized.createdAt,
       updatedAt: cleanText(record.updatedAt, 40) || normalized.updatedAt,
     }
@@ -1041,6 +1199,12 @@ export function planForPrompt(plan: Plan) {
       id: idea.id,
       title: idea.title,
       detail: idea.detail,
+    })),
+    daySchedule: plan.daySchedule.map((row) => ({
+      id: row.id,
+      time: row.time,
+      moment: row.moment,
+      note: row.note,
     })),
   }
 }
