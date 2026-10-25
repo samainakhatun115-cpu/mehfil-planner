@@ -1,0 +1,9 @@
+import { PlannerApp } from "@/components/planner-app"
+
+export default function Home() {
+  return (
+    <main>
+      <PlannerApp />
+    </main>
+  )
+}

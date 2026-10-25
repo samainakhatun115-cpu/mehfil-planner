@@ -1,0 +1,145 @@
+import { planForPrompt, type Brief, type Plan } from "@/lib/plan"
+
+const DEFAULT_MODEL = "gemini-2.5-flash"
+
+export function geminiModel(): string {
+  const configured = process.env.GEMINI_MODEL?.trim()
+  return configured || DEFAULT_MODEL
+}
+
+export function buildPrompt(
+  brief: Brief,
+  followUp: string,
+  currentPlan: Plan | null,
+): string {
+  const lines = [
+    "You are Mehfil, a celebration planner for events in India.",
+    "Return a practical plan for this brief. Currency is INR.",
+    "Budget figures are estimates, never confirmed vendor prices or bookings.",
+    "Vendors are categories the host should contact. Do not invent business names, phone numbers, websites, or addresses.",
+    "Cover a budget, a dated task timeline, a vendor checklist, and personalized ideas.",
+    "Use the city, guest count, diet, indoor or outdoor setting, and the host's own words.",
+    "Keep every list under 8 items. Write short sentences.",
+    "",
+    "Event brief:",
+    JSON.stringify(brief),
+  ]
+  if (currentPlan) {
+    lines.push(
+      "",
+      "Revise this existing plan. Preserve every id.",
+      "Do not change estimateInr when amountLocked is true.",
+      "Do not change done when doneLocked is true.",
+      "Do not remove items with amountLocked, doneLocked, or detailsLocked set to true.",
+      "Do not invent contacts. Contact fields are stored only in the app.",
+      "Existing plan:",
+      JSON.stringify(planForPrompt(currentPlan)),
+    )
+  }
+  if (followUp) {
+    lines.push("", "Host's follow-up note:", followUp)
+  }
+  return lines.join("\n")
+}
+
+const responseSchema = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    budgetLines: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          category: { type: "string" },
+          estimateInr: { type: "number" },
+          note: { type: "string" },
+        },
+        required: ["category", "estimateInr", "note"],
+      },
+    },
+    tasks: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          dueDate: { type: "string" },
+          priority: { type: "string", enum: ["high", "medium", "low"] },
+        },
+        required: ["title", "dueDate", "priority"],
+      },
+    },
+    vendors: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          category: { type: "string" },
+          why: { type: "string" },
+        },
+        required: ["category", "why"],
+      },
+    },
+    ideas: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          detail: { type: "string" },
+        },
+        required: ["title", "detail"],
+      },
+    },
+  },
+  required: ["summary", "budgetLines", "tasks", "vendors", "ideas"],
+}
+
+export async function generateWithGemini(args: {
+  apiKey: string
+  brief: Brief
+  followUp: string
+  currentPlan: Plan | null
+  signal: AbortSignal
+}): Promise<unknown> {
+  const model = geminiModel()
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
+  const response = await fetch(url, {
+    method: "POST",
+    signal: args.signal,
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": args.apiKey,
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: buildPrompt(args.brief, args.followUp, args.currentPlan) }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.4,
+        responseMimeType: "application/json",
+        responseSchema,
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`GEMINI_${response.status}`)
+  }
+
+  const payload = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+  }
+  const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("")
+  if (!text) throw new Error("GEMINI_EMPTY")
+  const trimmed = text.trim().replace(/^```json\s*/i, "").replace(/```$/, "")
+  return JSON.parse(trimmed) as unknown
+}
