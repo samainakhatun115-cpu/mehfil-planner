@@ -35,9 +35,3 @@ npm run lint
 - Vendor status, quote, and contact are typed by the host. Contacts are not sent to Gemini.
 - A follow-up note revises the plan and keeps locked edits: changed amounts, checked tasks, and vendor details.
 - The brief and plan are saved in this browser.
-
-## Submission
-
-The deadline, form fields, video script, and checklist are in [SUBMISSION.md](SUBMISSION.md).
-
-Finish one personal change in Google Antigravity before you submit, and describe the tools you actually used. The PromptWars FAQ asks for Antigravity, and it treats plagiarism and extra accounts as unfair means.
