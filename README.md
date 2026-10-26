@@ -1,6 +1,6 @@
 # Mehfil
 
-Mehfil is a celebration planner for [PromptWars Virtual Challenge 5](https://promptwars.in/promptwarsVirtual.html): weddings, birthdays, and community gatherings. A host describes the day. The app returns a budget, a timeline, a vendor checklist, and ideas they can edit.
+Mehfil is a celebration planner for [PromptWars Virtual Challenge 5](https://promptwars.in/promptwarsVirtual.html): weddings, birthdays, and community gatherings. A host describes the day. The app returns a budget, a timeline, a vendor checklist, personalized ideas, and a day-of schedule they can edit.
 
 Estimates are labeled as estimates. Vendor rows are categories, not shop listings. The host types any real contact themselves.
 
@@ -33,5 +33,6 @@ npm run lint
 - Budget lines are editable. The total is compared with the cap, and an over-budget warning appears when the estimates pass it.
 - Tasks are dated, prioritized, and checkable. A countdown sits above the plan.
 - Vendor status, quote, and contact are typed by the host. Contacts are not sent to Gemini.
-- A follow-up note revises the plan and keeps locked edits: changed amounts, checked tasks, and vendor details.
+- Day-of schedule rows show suggested times, moments, and notes that can be edited in place.
+- A follow-up note revises the plan and keeps locked edits: changed amounts, checked tasks, vendor details, and schedule rows.
 - The brief and plan are saved in this browser.

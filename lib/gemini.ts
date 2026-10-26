@@ -1,6 +1,7 @@
 import { planForPrompt, type Brief, type Plan } from "@/lib/plan"
 
 const DEFAULT_MODEL = "gemini-3.6-flash"
+const FALLBACK_MODELS = ["gemini-3.5-flash"] as const
 
 export function geminiModel(): string {
   const configured = process.env.GEMINI_MODEL?.trim()
@@ -17,7 +18,7 @@ export function buildPrompt(
     "Return a practical plan for this brief. Currency is INR.",
     "Budget figures are estimates, never confirmed vendor prices or bookings.",
     "Vendors are categories the host should contact. Do not invent business names, phone numbers, websites, or addresses.",
-    "Cover a budget, a dated task timeline, a vendor checklist, and personalized ideas.",
+    "Cover a budget, a dated task timeline, a vendor checklist, personalized ideas, and a 5 to 7 row day-of schedule (24-hour HH:MM times).",
     "Use the city, guest count, diet, indoor or outdoor setting, and the host's own words.",
     "Keep every list under 8 items. Write short sentences.",
     "",
@@ -96,8 +97,21 @@ const responseSchema = {
         required: ["title", "detail"],
       },
     },
+    daySchedule: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          time: { type: "string" },
+          moment: { type: "string" },
+          note: { type: "string" },
+        },
+        required: ["time", "moment", "note"],
+      },
+    },
   },
-  required: ["summary", "budgetLines", "tasks", "vendors", "ideas"],
+  required: ["summary", "budgetLines", "tasks", "vendors", "ideas", "daySchedule"],
 }
 
 const RETRYABLE_STATUS = new Set([429, 503])
@@ -128,8 +142,11 @@ export async function generateWithGemini(args: {
   currentPlan: Plan | null
   signal: AbortSignal
 }): Promise<unknown> {
-  const model = geminiModel()
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
+  const primary = geminiModel()
+  const models = [
+    primary,
+    ...FALLBACK_MODELS.filter((candidate) => candidate !== primary),
+  ]
   const body = JSON.stringify({
     contents: [
       {
@@ -147,18 +164,23 @@ export async function generateWithGemini(args: {
   })
 
   let response: Response | null = null
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    response = await fetch(url, {
-      method: "POST",
-      signal: args.signal,
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": args.apiKey,
-      },
-      body,
-    })
-    if (response.ok || !RETRYABLE_STATUS.has(response.status) || attempt === 1) break
-    await pause(800, args.signal)
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index]
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      response = await fetch(url, {
+        method: "POST",
+        signal: args.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": args.apiKey,
+        },
+        body,
+      })
+      if (response.ok || !RETRYABLE_STATUS.has(response.status) || attempt === 1) break
+      await pause(600, args.signal)
+    }
+    if (response?.ok || !response || !RETRYABLE_STATUS.has(response.status)) break
   }
 
   if (!response?.ok) {

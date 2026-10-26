@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest"
 import { buildPrompt } from "@/lib/gemini"
 import {
+  blankVendor,
   budgetSnapshot,
   budgetTotal,
+  buildDaySchedule,
   buildSamplePlan,
+  countdownLabel,
+  formatInr,
   mergeRefinement,
   normalizeGeneratedPlan,
   parsePlanRequest,
+  parseStoredPlan,
+  planForPrompt,
   sortTasks,
   validateBrief,
   type Brief,
@@ -39,8 +45,9 @@ function sample(overrides?: Partial<Brief>, budget = brief.budgetInr) {
 }
 
 describe("budget", () => {
-  it("sums line estimates", () => {
+  it("sums line estimates and formats INR currency", () => {
     expect(budgetTotal([{ estimateInr: 1200 }, { estimateInr: 800 }])).toBe(2000)
+    expect(formatInr(20000)).toContain("20,000")
   })
 
   it("flags an over-budget plan and reports the gap", () => {
@@ -61,16 +68,18 @@ describe("budget", () => {
     expect(snapshot.percent).toBe(60)
   })
 
-  it("makes the sample budget add up to the cap", () => {
-    for (const budget of [20000, 12345, 500, 99999]) {
-      const plan = sample(undefined, budget)
-      expect(budgetTotal(plan.budgetLines)).toBe(budget)
-      expect(budgetSnapshot(plan.budgetLines, budget).overBudget).toBe(false)
+  it("makes the sample budget add up to the cap across event types", () => {
+    for (const eventType of ["birthday", "wedding", "community"] as const) {
+      for (const budget of [20000, 12345, 500, 99999]) {
+        const plan = sample({ eventType }, budget)
+        expect(budgetTotal(plan.budgetLines)).toBe(budget)
+        expect(budgetSnapshot(plan.budgetLines, budget).overBudget).toBe(false)
+      }
     }
   })
 })
 
-describe("timeline", () => {
+describe("timeline and countdown", () => {
   it("orders tasks by date, then by priority", () => {
     const tasks = [
       task("low", "2026-11-02"),
@@ -95,9 +104,16 @@ describe("timeline", () => {
       [...plan.tasks].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).map((item) => item.dueDate),
     )
   })
+
+  it("formats countdown labels for today, tomorrow, future, and past dates", () => {
+    expect(countdownLabel("2026-10-25", today)).toBe("Today")
+    expect(countdownLabel("2026-10-26", today)).toBe("Tomorrow")
+    expect(countdownLabel("2026-11-04", today)).toBe("In 10 days")
+    expect(countdownLabel("2026-10-24", today)).toBe("Yesterday")
+  })
 })
 
-describe("sample plan", () => {
+describe("sample plan and day-of schedule", () => {
   it("does not invent vendor contacts", () => {
     const plan = sample()
     expect(plan.source).toBe("sample")
@@ -109,10 +125,17 @@ describe("sample plan", () => {
     }
     expect(plan.summary.toLowerCase()).toContain("not a live gemini")
   })
+
+  it("builds a 7-row day-of schedule tailored to the city and setting", () => {
+    const rows = buildDaySchedule({ ...brief, city: "Karnal" }, ids())
+    expect(rows).toHaveLength(7)
+    expect(rows.every((row) => /^\d{2}:\d{2}$/.test(row.time))).toBe(true)
+    expect(rows.some((row) => row.note.includes("Karnal"))).toBe(true)
+  })
 })
 
 describe("gemini output", () => {
-  it("strips invented vendor names and phone numbers", () => {
+  it("strips invented vendor names and phone numbers and normalizes schedule rows", () => {
     const plan = normalizeGeneratedPlan(
       {
         summary: "A small outdoor birthday in Pune.",
@@ -136,6 +159,9 @@ describe("gemini output", () => {
             detail: "Keep them low so they do not fight the daylight.",
           },
         ],
+        daySchedule: [
+          { time: "17:00", moment: "Guests arrive", note: "Welcome tea" },
+        ],
       },
       brief,
       "gemini",
@@ -144,18 +170,28 @@ describe("gemini output", () => {
     )
     expect(plan.vendors[0]?.contactName).toBe("")
     expect(plan.vendors[0]?.contactPhone).toBe("")
+    expect(plan.daySchedule[0]?.time).toBe("17:00")
     expect(plan.source).toBe("gemini")
   })
 
-  it("tells the model not to invent businesses", () => {
-    const prompt = buildPrompt(brief, "Add a quieter welcome.", null)
+  it("tells the model not to invent businesses and omits private contacts from prompts", () => {
+    const existing = sample()
+    existing.vendors[0] = {
+      ...existing.vendors[0],
+      contactName: "Private Name",
+      contactPhone: "9876543210",
+    }
+    const prompt = buildPrompt(brief, "Add a quieter welcome.", existing)
     expect(prompt).toContain("Do not invent business names")
     expect(prompt).toContain("Pune")
+    expect(prompt).not.toContain("Private Name")
+    expect(prompt).not.toContain("9876543210")
+    expect(JSON.stringify(planForPrompt(existing))).not.toContain("9876543210")
   })
 })
 
-describe("merge", () => {
-  it("keeps locked amounts, checked tasks, and typed vendor details", () => {
+describe("merge and persistence", () => {
+  it("keeps locked amounts, checked tasks, typed vendor details, and locked schedule rows", () => {
     const previous = sample()
     previous.budgetLines[0] = {
       ...previous.budgetLines[0],
@@ -170,6 +206,11 @@ describe("merge", () => {
       contactPhone: "9876543210",
       quoteInr: 2500,
       detailsLocked: true,
+    }
+    previous.daySchedule[0] = {
+      ...previous.daySchedule[0],
+      time: "09:30",
+      locked: true,
     }
     const incoming = normalizeGeneratedPlan(
       {
@@ -206,8 +247,23 @@ describe("merge", () => {
     expect(vendor?.contactPhone).toBe("9876543210")
     expect(vendor?.status).toBe("confirmed")
     expect(merged.vendors.some((item) => item.contactName === "Invented Shop")).toBe(false)
+    expect(merged.daySchedule[0]?.time).toBe("09:30")
     expect(merged.ideas[0]?.title).toBe("Soft welcome")
     expect(merged.source).toBe("gemini")
+  })
+
+  it("round-trips a stored plan with user-added vendors and locked edits", () => {
+    const plan = sample()
+    plan.vendors.push({
+      ...blankVendor(ids()),
+      contactName: "Samaina",
+      contactPhone: "+91 98765-43210",
+    })
+    plan.daySchedule[0] = { ...plan.daySchedule[0], time: "08:45", locked: true }
+    const restored = parseStoredPlan(JSON.parse(JSON.stringify(plan)))
+    expect(restored).not.toBeNull()
+    expect(restored?.vendors.some((v) => v.contactName === "Samaina")).toBe(true)
+    expect(restored?.daySchedule[0]?.time).toBe("08:45")
   })
 })
 
